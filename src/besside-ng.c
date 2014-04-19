@@ -2548,7 +2548,8 @@ static void wifi_read(void)
 
 	rd = wi_read(s->s_wi, buf, sizeof(buf), &ri);
 	if (rd <= 0)
-		err(1, "wi_read()");
+	    return;
+//		err(1, "wi_read()");
 
 	s->s_ri = &ri;
 
@@ -2618,7 +2619,7 @@ static void print_status(int advance)
 	struct client *c;
 	int ccount = 0;
 
-	time_printf(V_NORMAL, "%c", *statusp);
+	time_printf(V_NORMAL, " ");
 
 	switch (_state.s_state) {
 	case STATE_SCAN:
