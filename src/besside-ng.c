@@ -156,6 +156,7 @@ struct conf {
     pcre *cf_essid_regex;
 #endif
 	int		cf_split_wpa_files;
+	int		cf_send_broadcast_deauth;
 } _conf;
 
 struct timer {
@@ -248,6 +249,18 @@ struct state {
 
 static void attack_continue(struct network *n);
 static void attack(struct network *n);
+
+static int client_count(struct network *n)
+{
+    int cc = 0;
+    struct client * c = n->n_clients.c_next;
+    while (c != NULL)
+    {
+        c = c->c_next;
+        cc++;
+    }
+    return cc;
+}
 
 void show_wep_stats(int UNUSED(B), int UNUSED(force),
 		    PTW_tableentry UNUSED(table[PTW_KEYHSBYTES][PTW_n]),
@@ -352,6 +365,9 @@ static void save_network(FILE *f, struct network *n)
 	if (n->n_got_mac)
 		fprintf(f, "%s", mac2str(n->n_client_mac->c_mac));
 
+    int cc = client_count(n);
+	fprintf(f, " | %d", cc);
+
 	fprintf(f, "\n");
 }
 
@@ -366,7 +382,8 @@ static void save_log(void)
 
 	fprintf(f, "# SSID              ");
 	fprintf(f, "| KEY                                    | BSSID");
-	fprintf(f, "             | MAC filter\n");
+	fprintf(f, "             | MAC filter");
+	fprintf(f, "             | Known clients\n");
 
 	while (n) {
 		save_network(f, n);
@@ -707,6 +724,7 @@ static void wifi_send(void *p, int len)
 		err(1, "wi_wirte()");
 }
 
+
 static void deauth_send(struct network *n, unsigned char *mac)
 {
 	unsigned char buf[2048];
@@ -737,7 +755,11 @@ static void deauth(void *arg)
 	    || n->n_astate != ASTATE_DEAUTH)
 		return;
 
-	deauth_send(n, BROADCAST);
+    if (_conf.cf_send_broadcast_deauth == 0 && client_count(n) == 0)
+        return;
+
+    if (_conf.cf_send_broadcast_deauth)
+        deauth_send(n, BROADCAST);
 
 	while (c) {
 		deauth_send(n, c->c_mac);
@@ -3075,6 +3097,7 @@ static void init_conf(void)
 	_conf.cf_do_wep     = 1;
 	_conf.cf_do_wpa     = 1;
 	_conf.cf_split_wpa_files = 0;
+	_conf.cf_send_broadcast_deauth = 1;
 }
 
 static const char *timer_cb2str(timer_cb cb)
@@ -3213,7 +3236,7 @@ int main(int argc, char *argv[])
 
 	init_conf();
 
-	while ((ch = getopt(argc, argv, "hb:vWs:c:p:R:S")) != -1) {
+	while ((ch = getopt(argc, argv, "hb:vWs:c:p:R:SD")) != -1) {
 		switch (ch) {
 		case 's':
 			_conf.cf_wpa_server = optarg;
@@ -3259,6 +3282,10 @@ int main(int argc, char *argv[])
             }
             break;
 #endif
+		case 'D':
+			_conf.cf_send_broadcast_deauth = 0;
+			break;
+
 		case 'S':
 			_conf.cf_split_wpa_files = 1;
 			break;
