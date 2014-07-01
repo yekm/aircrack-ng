@@ -155,6 +155,7 @@ struct conf {
 #ifdef HAVE_PCRE
     pcre *cf_essid_regex;
 #endif
+	int		cf_split_wpa_files;
 } _conf;
 
 struct timer {
@@ -225,6 +226,7 @@ struct network {
 	int		n_mac_filter;
 	struct client	*n_client_mac;
 	int		n_got_mac;
+	int		n_wpafd;
 };
 
 struct state {
@@ -942,17 +944,60 @@ __fail:
 	time_printf(V_NORMAL, "WPA handshake upload failed\n");
 }
 
+static int choose_dump_file(struct network *n)
+{
+    struct stat sstat;
+    if (_conf.cf_split_wpa_files == 1)
+    {
+        if (n->n_wpafd == 0)
+        {
+            char id[64];
+            snprintf(id, sizeof(id), "%d_%.2x%.2x%.2x%.2x%.2x%.2x_%s", n->n_chan,
+                    n->n_bssid[0], n->n_bssid[1], n->n_bssid[2], n->n_bssid[3], n->n_bssid[4], n->n_bssid[5],
+                    n->n_ssid);
+            char fn[128];
+            snprintf(fn, sizeof(fn), "%s.cap", id);
+            int c = 0;
+            while (stat(fn, &sstat) == 0 && c < 10)
+            {
+                time_printf(V_NORMAL, "already have a %s\n", fn);
+                snprintf(fn, sizeof(fn), "%s-%d.cap", id, c);
+                c++;
+            }
+            if (c == 10)
+                n->n_wpafd = -1;
+            else
+                n->n_wpafd = open_pcap(fn);
+        }
+        else
+        {
+            time_printf(V_NORMAL, "using already opened\n");
+        }
+        return n->n_wpafd;
+    }
+    else
+    {
+        return _state.s_wpafd;
+    }
+}
+
 static void wpa_crack(struct network *n)
 {
 	int i;
+	int fd = choose_dump_file(n);
+	if (fd == -1)
+    {
+        time_printf(V_NORMAL, "using already have too much wpa captures for %s, skipping", n->n_ssid);
+        return;
+    }
 
-	packet_write_pcap(_state.s_wpafd, &n->n_beacon);
+	packet_write_pcap(fd, &n->n_beacon);
 
 	for (i = 0; i < 4; i++) {
 		struct packet *p = &n->n_client_handshake->c_handshake[i];
 
 		if (p->p_len)
-			packet_write_pcap(_state.s_wpafd, p);
+			packet_write_pcap(fd, p);
 	}
 
 	fsync(_state.s_wpafd);
@@ -3029,6 +3074,7 @@ static void init_conf(void)
 	_conf.cf_log	    = "besside.log";
 	_conf.cf_do_wep     = 1;
 	_conf.cf_do_wpa     = 1;
+	_conf.cf_split_wpa_files = 0;
 }
 
 static const char *timer_cb2str(timer_cb cb)
@@ -3147,6 +3193,7 @@ static void usage(char *prog)
 		"       -c       <chan> : chanlock\n"
 		"       -p       <pps>  : flood rate\n"
 		"       -W              : WPA only\n"
+		"       -S              : split WPA cap files by ssid\n"
                 "       -v              : verbose, -vv for more, etc.\n"
                 "       -h              : This help screen\n"
                 "\n",
@@ -3166,7 +3213,7 @@ int main(int argc, char *argv[])
 
 	init_conf();
 
-	while ((ch = getopt(argc, argv, "hb:vWs:c:p:R:")) != -1) {
+	while ((ch = getopt(argc, argv, "hb:vWs:c:p:R:S")) != -1) {
 		switch (ch) {
 		case 's':
 			_conf.cf_wpa_server = optarg;
@@ -3212,6 +3259,9 @@ int main(int argc, char *argv[])
             }
             break;
 #endif
+		case 'S':
+			_conf.cf_split_wpa_files = 1;
+			break;
 
 		default:
 		case 'h':

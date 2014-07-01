@@ -75,9 +75,11 @@ struct network {
 	struct client	n_clients;
 	struct client	*n_handshake;
 	struct network	*n_next;
+	int		n_wpafd;
 } _networks;
 
 static int _outfd;
+static int split_wpa_files;
 
 static int open_pcap(char *fname)
 {       
@@ -138,17 +140,61 @@ static void print_network(struct network *n)
 		n->n_ssid);
 }
 
+static int choose_dump_file(struct network *n)
+{
+    struct stat sstat;
+    if (split_wpa_files == 1)
+    {
+        if (n->n_wpafd == 0)
+        {
+            char id[64];
+            snprintf(id, sizeof(id), "%.2x%.2x%.2x%.2x%.2x%.2x_%s",
+                    n->n_bssid[0], n->n_bssid[1], n->n_bssid[2], n->n_bssid[3], n->n_bssid[4], n->n_bssid[5],
+                    n->n_ssid);
+            char fn[128];
+            snprintf(fn, sizeof(fn), "%s.cap", id);
+            int c = 0;
+            while (stat(fn, &sstat) == 0 && c < 10)
+            {
+                printf("already have a %s\n", fn);
+                snprintf(fn, sizeof(fn), "%s-%d.cap", id, c);
+                c++;
+            }
+            if (c == 10)
+                n->n_wpafd = -1;
+            else
+                n->n_wpafd = open_pcap(fn);
+        }
+        else
+        {
+            printf("using already opened\n");
+        }
+        return n->n_wpafd;
+    }
+    else
+    {
+        return _outfd;
+    }
+}
+
 static void save_network(struct network *n)
 {
 	int i;
 
-	write_pcap(_outfd, n->n_beacon, n->n_beaconlen);
+    int fd = choose_dump_file(n);
+    if (fd == -1)
+    {
+        printf("using already have too much wpa captures for %s, skipping", n->n_ssid);
+        return;
+    }
+
+	write_pcap(fd, n->n_beacon, n->n_beaconlen);
 
         for (i = 0; i < 4; i++) {
                 struct packet *p = &n->n_handshake->c_handshake[i];
 
                 if (p->p_len)
-                        packet_write_pcap(_outfd, p);
+                        packet_write_pcap(fd, p);
         }
 }
 
@@ -714,8 +760,15 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
+    split_wpa_files = 0;
 	out = argv[1];
-	_outfd = open_pcap(out);
+	if (strcmp(out, "-S") == 0)
+    {
+	    printf("spliting");
+        split_wpa_files = 1;
+    }
+    else
+	    _outfd = open_pcap(out);
 
 	for (i = 2; i < argc; i++) {
 		char *in = argv[i];
